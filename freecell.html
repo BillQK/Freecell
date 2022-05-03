@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>
+Freecell
+</title>
+<script src="https://code.jquery.com/jquery-3.4.1.min.js"
+        integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo="
+        crossorigin="anonymous"></script>
+<script src="https://code.jquery.com/ui/1.12.0/jquery-ui.min.js"></script>
+<script src="jquery.touchpunch.min.js"></script>
+<script src="FreecellGame.class.js"></script>
+<script src="Card.class.js"></script>
+<style media="screen" type="text/css">
+body {
+  font-family: sans-serif;
+}
+.stack {
+  position: absolute;
+}
+.card {
+  width: 100px;
+  height: 140px;
+  border: 2px solid #424242;
+  position: absolute;
+  background: white;
+  padding: 2px;
+  font-size: 140%;
+  border-radius: 9%;
+  cursor: pointer;
+}
+.foundation, .open {
+  width: 60px;
+  height: 80px;
+  border: 2px solid gray;
+  position: absolute;
+  background: white;
+  padding: 2px;
+  border-radius: 6%;
+}
+.open {
+  border: 2px solid blue;
+}
+.prompt {
+  width: 30px;
+}
+</style>
+<body>
+<div id="gameparams">
+  Number of Open: <input type="text" id="numOpen" class="prompt">
+  Number of Cascade: <input type="text" id="numCascade" class="prompt">
+  <button id="newgame">New Game</button>
+</div>
+<div id="game" style="display: none;">
+  <section id="toprow" style="height: 60px;">
+  </section>
+  <br><br>
+  <div id="cascades" style="height: 250px">
+  </div>
+</div> <!-- game board -->
+<script>
+var maxZindex = 40;
+var reverted = true;
+var destPile = null;
+var srcPile = null;
+
+var game;
+$('#newgame').click(function(evt) {
+  try {
+    game = new FreecellGame($('#numOpen').val(), $('#numCascade').val());
+    $('#gameparams').hide();
+    setupView(game);
+  } catch(err) {
+    alert(err);
+  }
+});
+function setupView(game) {
+  $('#game').show();
+  $('#toprow').html('');
+  for(var i = 0; i < 4; i++) {   // four foundation piles
+    $('#toprow').append('<div id="foundation' + i + '" class="foundation" style="top:10px; left: '
+                  + i * FOUNDATION_CARD_WIDTH + 'px">');
+    var last = game.getFoundation()[i].length - 1;
+    $('#foundation' + i).html(last >= 0 ? game.getFoundation()[i][last].toString() : '');
+  }
+  for(let i = 0; i < game.getNumOpen(); i++) {
+    $('#toprow').append('<div id="open' + i + '" class="open" style="top:10px; left:'
+                  + (i + 4) * FOUNDATION_CARD_WIDTH +'px"></div>');
+    if(game.getOpen()[i].length) {
+      $('#open' + i).append('<div class="card" id="opencard' + i + '">'
+                      + game.getOpen()[i][0].toString() + '</div>');
+      $('#opencard' + i).css('width', (FOUNDATION_CARD_WIDTH - 20) + 'px');
+      $('#opencard' + i).css('height', FOUNDATION_CARD_HEIGHT + 'px');
+      $('#opencard' + i).draggable(draggableOpts);
+      $('#opencard' + i).dblclick(function() {
+        attemptAutoMove({type: "open", index: i});
+      });
+    }
+  }
+  $('#cascades').html('');
+  for(let i = 0; i < game.getNumCascade(); i++) {
+    $('#cascades').append('<div id="c' + i + '" class="stack"></div>');
+    if(game.getCascade()[i].length) {
+      let card;
+      let j;
+      for(j = 0; j < game.getCascade()[i].length; j++) {
+        card = $('<section id="cascade' + i + '_' + j
+                + '" class="draggable" style="position: absolute; top:'
+                + (j == 0 ? CASCADE_TOP : PILE_OFFSET) + 'px;">'
+                + '<div id="cascadeCard' + i + '_' + j + '" class="card" style="top:0px">'
+                + game.getCascade()[i][j].toString() + '</div></section>');
+        dropOntoCascade(card, {type: "cascade", index: i}, j);
+      }
+      card.dblclick(function() {
+        attemptAutoMove({type: "cascade", index: i, cardIndex: j - 1});
+      });
+    }
+  }
+  makeBuildsDraggable();
+}
+function makeBuildsDraggable() {
+  for(var i = 0; i < game.getNumCascade(); i++) {
+    for(var j = 0; j < game.getCascade()[i].length; j++) {
+      if(game.isBuild(i, j)) {
+        $('#cascade' + i + '_' + j).draggable(draggableOpts);
+      }
+    }
+  }
+}
+
+// This is effectively the Controller: react to drag and drop events
+var draggableOpts = {
+  revertDuration: 200,
+  revert:
+    function(evt, ui) {
+      // structure of srcPile/destPile object:
+      // {type: [cascade/open/foundation], index: [0-based pile index], cardIndex: [0-based card index within pile]}
+      // {type: "foundation", index: 3}  note that there's no cardIndex for foundation/open
+      // {type:"cascade", index: 2, cardIndex: 4}
+      srcPile = pileFromID($(this).attr('id'));
+      destPile = pileFromXY($(this).data('uiDraggable').positionAbs.left + CARD_CORNER_OFFSET_X,
+                            $(this).data('uiDraggable').positionAbs.top + CARD_CORNER_OFFSET_Y);
+      // allow to drop anywhere in the foundation/open area
+      if(destPile && destPile.type == "foundation") {
+        destPile.index = game.getValidFoundation(srcPile);
+      } else if(destPile && destPile.type == "open") {
+        destPile.index = game.getFirstAvailableOpen();
+        console.log('destPile index from first available', destPile)
+      }
+      console.log('srcPile', srcPile);
+      console.log('destPile', destPile);
+      reverted = !game.isValidMove(srcPile, destPile);
+      return reverted;
+    },
+  start: function(evt, ui) {
+           maxZindex += 10;
+           ui.helper.parents('div,section').css('z-index', maxZindex);
+           ui.helper.css('z-index', maxZindex + 1);
+         },
+  stop: function(evt, ui) {
+          if(!reverted) {
+            game.executeMove(srcPile, destPile);
+            setupView(game);
+          }
+        }
+};
+
+// when card is double-clicked, attempt a move to foundation or open
+function attemptAutoMove(srcPile) {
+  if (game.attemptAutoMove(srcPile)) {
+    setupView(game);
+  }
+}
+
+// fix up card into position on cascade
+function dropOntoCascade(helper, destPile, offset) {
+  helper.prop('id', 'cascade' + destPile.index + '_' + offset);
+  if(offset == 0) {
+    $('#c' + destPile.index).append(helper);
+    $('#c' + destPile.index).css('position', 'absolute');
+    $('#c' + destPile.index).css('left', (destPile.index) * CARD_WIDTH + 10 + 'px');
+  } else {
+    $('#cascade' + destPile.index + '_' + (offset - 1)).append(helper);
+  }
+}
+
+const CASCADE_TOP = 10;
+const PILE_OFFSET = 31;
+const CARD_WIDTH = 120;
+const FOUNDATION_CARD_WIDTH = 80;
+const FOUNDATION_CARD_HEIGHT = 80;
+// rather than use extreme upper left point of card, use inner upper corner: add this amount to
+// x and y of upper left corner of dragged element.
+const CARD_CORNER_OFFSET_X = 18;
+const CARD_CORNER_OFFSET_Y = 10;
+function pileFromXY(x, y) {
+  if(x < game.getNumCascade() * CARD_WIDTH && y > FOUNDATION_CARD_HEIGHT + 5 && y < 600) {
+    return {type: "cascade", index: Math.max(0, Math.floor(x / CARD_WIDTH))};
+  } else if(x < FOUNDATION_CARD_WIDTH * 4 && y < FOUNDATION_CARD_HEIGHT + 10) {
+    return {type: "foundation"};
+  } else if(x > FOUNDATION_CARD_WIDTH * 4 && y < FOUNDATION_CARD_HEIGHT + 10) {
+    return {type: "open"};
+  } else {
+    return null;
+  }
+}
+function pileFromID(id) {
+  if(id.startsWith("open")) {
+    return {type: "open", index: Number(id.replace("opencard", ''))};
+  } else if(id.startsWith("cascade")) {
+    return {type: "cascade", index: Number(id.replace("cascade", '').split('_')[0]),
+            cardIndex: Number(id.replace("cascade", '').split('_')[1])};
+  } else {
+    return null;
+  }
+}
+</script>
+</body>
+</html>
