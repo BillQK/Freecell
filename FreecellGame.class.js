@@ -105,7 +105,39 @@ class FreecellGame {
   // return true if success, false if no automatic move available
   // mutates the game state if a move is available.
   attemptAutoMove(srcPile) {
-
+    let src = null;
+    let cPile = null;
+    switch (srcPile.type) {
+      case "cascade":
+        cPile = this.cascade[srcPile.index];
+        src = cPile[srcPile.cardIndex];
+        break;
+      case "open":
+        cPile = this.open[srcPile.index];
+        src = cPile[0];
+        break;
+      case "foundation":
+        cPile = this.foundation[srcPile.index];
+        src = cPile[srcPile.cardIndex];
+        break;
+      default:
+        break;
+    }
+    let foundationIndex = this.getValidFoundation(srcPile);
+    if (foundationIndex !== null) {
+      this.foundation[foundationIndex].push(src);
+      cPile.pop();
+      return true;
+    }
+    let openIndex = this.getFirstAvailableOpen();
+    if (openIndex !== null) {
+      if (srcPile.type != "open") {
+        this.open[openIndex].push(src);
+        cPile.pop();
+        return true;
+      }
+    }
+    return false;
   }
 
   // return index of first valid foundation destination for the given card,
@@ -138,7 +170,7 @@ class FreecellGame {
           return i;
         }
       }
-      
+
     }
     return null;
 
@@ -170,9 +202,7 @@ class FreecellGame {
       || srcPile.type == "foundation") {
       return false;
     }
-    if (sSeq.length > this._numCanMove(destPile)) {
-      return false;
-    }
+
     // all the rules for moves in freecell:
     let src = null;
     let sSeq = null;
@@ -193,6 +223,10 @@ class FreecellGame {
         return false;
       default:
         return false;
+    }
+
+    if (sSeq.length > this._numCanMove(destPile)) {
+      return false;
     }
 
     // Add
@@ -241,8 +275,8 @@ class FreecellGame {
       for (let i = 1; i < sublist.length; i++) {
         if (!FreecellGame._isStackable(sublist[i], lastCard)) {
           return false;
-        } 
-        lastCard = sublist[i]; 
+        }
+        lastCard = sublist[i];
 
       }
       return true;
